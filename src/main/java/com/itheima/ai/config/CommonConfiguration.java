@@ -11,18 +11,18 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.memory.InMemoryChatMemory;
 import org.springframework.ai.chat.observation.ChatModelObservationConvention;
 import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.model.SimpleApiKey;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.redis.RedisVectorStore;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.retry.support.RetryTemplate;
@@ -38,15 +38,17 @@ import java.util.*;
 public class CommonConfiguration {
 
     @Bean
-    public ChatMemory chatMemory() {
-        return new InMemoryChatMemory();
+    public VectorStore vectorStore(@Qualifier("openAiEmbeddingModel") EmbeddingModel embeddingModel) {
+        redis.clients.jedis.JedisPooled jedis = new redis.clients.jedis.JedisPooled("localhost", 6379);
+        return RedisVectorStore.builder(jedis, embeddingModel)
+                .indexName("ai-document-index")
+                .prefix("doc:")
+                .initializeSchema(true)
+                .metadataFields(
+                        RedisVectorStore.MetadataField.text("file_name")
+                )
+                .build();
     }
-
-    @Bean
-    public VectorStore vectorStore(OpenAiEmbeddingModel embeddingModel) {
-        return SimpleVectorStore.builder(embeddingModel).build();
-    }
-
 
     @Bean
     public ChatClient chatClient(AlibabaOpenAiChatModel model, ChatMemory chatMemory) {

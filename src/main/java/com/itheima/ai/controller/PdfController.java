@@ -105,7 +105,9 @@ public class PdfController {
     }
 
     private void writeToVectorStore(Resource resource) {
-        // 1.创建PDF的读取器
+        // 1.获取文件名，用于后续的元数据过滤
+        String filename = resource.getFilename();
+        // 2.创建PDF的读取器
         PagePdfDocumentReader reader = new PagePdfDocumentReader(
                 resource, // 文件源
                 PdfDocumentReaderConfig.builder()
@@ -113,9 +115,14 @@ public class PdfController {
                         .withPagesPerDocument(1) // 每1页PDF作为一个Document
                         .build()
         );
-        // 2.读取PDF文档，拆分为Document
+        // 3.读取PDF文档，拆分为Document，并为每个文档添加file_name元数据
         List<Document> documents = reader.read();
-        // 3.写入向量库
+        documents.forEach(doc -> {
+            doc.getMetadata().put("file_name", filename);
+            doc.getMetadata().put("chatId", filename);
+        });
+        // 4.写入向量库
         vectorStore.add(documents);
+        log.info("成功写入 {} 个文档到向量库，file_name: {}", documents.size(), filename);
     }
 }
