@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:8080'
+﻿const BASE_URL = 'http://localhost:8080'
 
 export const chatAPI = {
   // 发送聊天消息
@@ -27,14 +27,13 @@ export const chatAPI = {
   },
 
   // 获取聊天历史列表
-  async getChatHistory(type = 'chat') {  // 添加类型参数
+  async getChatHistory(type = 'chat') {
     try {
       const response = await fetch(`${BASE_URL}/ai/history/${type}`)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
       const chatIds = await response.json()
-      // 转换为前端需要的格式
       return chatIds.map(id => ({
         id,
         title: type === 'pdf' ? `PDF对话 ${id.slice(-6)}` : 
@@ -48,17 +47,16 @@ export const chatAPI = {
   },
 
   // 获取特定对话的消息历史
-  async getChatMessages(chatId, type = 'chat') {  // 添加类型参数
+  async getChatMessages(chatId, type = 'chat') {
     try {
       const response = await fetch(`${BASE_URL}/ai/history/${type}/${chatId}`)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
       const messages = await response.json()
-      // 添加时间戳
       return messages.map(msg => ({
         ...msg,
-        timestamp: new Date() // 由于后端没有提供时间戳，这里临时使用当前时间
+        timestamp: new Date()
       }))
     } catch (error) {
       console.error('API Error:', error)
@@ -102,24 +100,61 @@ export const chatAPI = {
     }
   },
 
-  // 发送 PDF 问答消息
-  async sendPdfMessage(prompt, chatId) {
+  // 发送 PDF 问答消息（支持多文件，指定 fileName）
+  async sendPdfMessage(prompt, chatId, fileName) {
     try {
-      const response = await fetch(`${BASE_URL}/ai/pdf/chat?prompt=${encodeURIComponent(prompt)}&chatId=${chatId}`, {
+      let url = `${BASE_URL}/ai/pdf/chat?prompt=${encodeURIComponent(prompt)}&chatId=${chatId}`
+      if (fileName) {
+        url += `&fileName=${encodeURIComponent(fileName)}`
+      }
+      const response = await fetch(url, {
         method: 'GET',
-        // 确保使用流式响应
-        signal: AbortSignal.timeout(30000) // 30秒超时
+        signal: AbortSignal.timeout(30000)
       })
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
       }
 
-      // 返回可读流
       return response.body.getReader()
     } catch (error) {
       console.error('API Error:', error)
       throw error
     }
+  },
+
+  // ===== 多文件管理接口 =====
+
+  // 获取会话的文件列表
+  async getPdfFiles(chatId) {
+    try {
+      const response = await fetch(`${BASE_URL}/ai/pdf/files/${chatId}`)
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      const result = await response.json()
+      return result.data || []
+    } catch (error) {
+      console.error('获取文件列表失败:', error)
+      return []
+    }
+  },
+
+  // 删除指定文件
+  async deletePdfFile(chatId, filename) {
+    try {
+      const response = await fetch(
+        `${BASE_URL}/ai/pdf/file/${chatId}?filename=${encodeURIComponent(filename)}`,
+        { method: 'DELETE' }
+      )
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      const result = await response.json()
+      return result.ok === 1
+    } catch (error) {
+      console.error('删除文件失败:', error)
+      return false
+    }
   }
-} 
+}

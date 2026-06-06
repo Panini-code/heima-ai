@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="chat-pdf" :class="{ 'dark': isDark }">
     <div class="chat-container">
       <!-- 左侧边栏 -->
@@ -34,7 +34,7 @@
       <!-- 主要内容区域 -->
       <div class="chat-main">
         <!-- 未上传文件时显示上传界面 -->
-        <div v-if="!currentPdfName" class="upload-welcome">
+        <div v-if="!currentChatId && !isUploading" class="upload-welcome">
           <h1 class="main-title">
             与任何 <span class="highlight">PDF</span> 对话
           </h1>
@@ -43,53 +43,54 @@
             @dragover.prevent="handleDragOver"
             @dragleave.prevent="handleDragLeave"
             @drop.prevent="handleDrop"
-            :class="{ 
-              'dragging': isDragging,
-              'uploading': isUploading 
-            }"
+            :class="{ 'dragging': isDragging }"
           >
             <div class="upload-content">
-              <!-- 添加上传状态显示 -->
-              <div v-if="isUploading" class="upload-status">
-                <div class="spinner"></div>
-                <div class="upload-progress">
-                  <p class="status-text">正在上传文件...</p>
-                  <p class="filename">{{ uploadingFileName }}</p>
-                </div>
-              </div>
-              <template v-else>
-                <DocumentArrowUpIcon class="upload-icon" />
-                <p class="upload-text">点击上传，或将PDF拖拽到此处</p>
-                <input 
-                  type="file"
-                  accept=".pdf"
-                  @change="handleFileUpload"
-                  :disabled="isUploading"
-                  class="file-input"
-                >
-                <button 
-                  class="upload-button"
-                  :class="{ 'uploading': isUploading }"
-                  @click="triggerFileInput"
-                >
-                  <ArrowUpTrayIcon class="icon" />
-                  上传PDF
-                </button>
-              </template>
+              <DocumentArrowUpIcon class="upload-icon" />
+              <p class="upload-text">点击上传，或将PDF拖拽到此处</p>
+              <input 
+                type="file"
+                accept=".pdf"
+                @change="handleFileUpload"
+                :disabled="isUploading"
+                class="file-input"
+                multiple
+              >
+              <button class="upload-button" @click="triggerFileInput">
+                <ArrowUpTrayIcon class="icon" />
+                上传PDF
+              </button>
             </div>
           </div>
         </div>
 
         <!-- 已上传文件时显示分栏界面 -->
         <div v-else class="split-view">
-          <!-- PDF 预览组件 -->
+          <!-- PDF 文件区域 -->
           <PDFViewer 
             :file="pdfFile"
-            :fileName="currentPdfName"
+            :fileName="activeFileName"
+            :files="fileList"
+            :activeFile="activeFileName"
+            @fileSelect="switchFile"
+            @fileDelete="handleFileDelete"
+            @addFile="triggerFileInput"
           />
 
           <!-- 聊天区域 -->
           <div class="chat-view">
+            <!-- 上传进度提示 -->
+            <div v-if="isUploading" class="upload-banner">
+              <div class="upload-spinner"></div>
+              <span>{{ uploadingFileName ? '正在上传: ' + uploadingFileName : '正在上传...' }}</span>
+            </div>
+
+            <!-- 成功/失败提示 -->
+            <div v-if="uploadMessage" class="upload-banner" :class="uploadMessageType">
+              <span>{{ uploadMessage }}</span>
+              <button class="banner-close" @click="uploadMessage = ''">&times;</button>
+            </div>
+
             <div class="messages" ref="messagesRef">
               <ChatMessage
                 v-for="(message, index) in currentMessages"
@@ -97,6 +98,11 @@
                 :message="message"
                 :is-stream="isStreaming && index === currentMessages.length - 1"
               />
+              <!-- 无文件提示 -->
+              <div v-if="fileList.length === 0 && currentChatId" class="no-file-hint">
+                <p>当前会话没有关联的 PDF 文件</p>
+                <button class="upload-again-btn" @click="triggerFileInput">上传文件</button>
+              </div>
             </div>
             
             <div class="input-area">
@@ -106,11 +112,12 @@
                 placeholder="请输入您的问题..."
                 rows="1"
                 ref="inputRef"
+                :disabled="fileList.length === 0"
               ></textarea>
               <button 
                 class="send-button" 
                 @click="sendMessage()"
-                :disabled="isStreaming || !userInput.trim()"
+                :disabled="isStreaming || !userInput.trim() || fileList.length === 0"
               >
                 <PaperAirplaneIcon class="icon" />
               </button>
@@ -123,7 +130,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch, onUnmounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useDark } from '@vueuse/core'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -132,9 +139,7 @@ import {
   DocumentTextIcon,
   PaperAirplaneIcon,
   ArrowUpTrayIcon,
-  PlusIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon
+  PlusIcon
 } from '@heroicons/vue/24/outline'
 import ChatMessage from '../components/ChatMessage.vue'
 import { chatAPI } from '../services/api'
@@ -148,21 +153,25 @@ const inputRef = ref(null)
 const userInput = ref('')
 const isStreaming = ref(false)
 const isUploading = ref(false)
+const uploadingFileName = ref('')
 const currentChatId = ref(null)
-const currentMessages = ref([])
 const chatHistory = ref([])
 const currentPdfName = ref('')
+const currentMessages = ref([])
 const isDragging = ref(false)
+const isDownloadingPdf = ref(false)
+const pdfFile = ref(null)
+const uploadMessage = ref('')
+const uploadMessageType = ref('success')
+
+// ===== 多文件管理新增状态 =====
+const fileList = ref([])
+const activeFileName = ref('')
+
 const BASE_URL = 'http://localhost:8080'
 
-// 配置 marked
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-  sanitize: false
-})
+marked.setOptions({ breaks: true, gfm: true, sanitize: false })
 
-// 自动调整输入框高度
 const adjustTextareaHeight = () => {
   const textarea = inputRef.value
   if (textarea) {
@@ -171,7 +180,6 @@ const adjustTextareaHeight = () => {
   }
 }
 
-// 滚动到底部
 const scrollToBottom = async () => {
   await nextTick()
   if (messagesRef.value) {
@@ -179,13 +187,6 @@ const scrollToBottom = async () => {
   }
 }
 
-// 添加下载状态
-const isDownloadingPdf = ref(false)
-
-// 添加 pdfFile ref
-const pdfFile = ref(null)
-
-// 修改资源清理函数
 const cleanupResources = () => {
   currentPdfName.value = ''
   currentMessages.value = []
@@ -196,107 +197,210 @@ const cleanupResources = () => {
   uploadingFileName.value = ''
   userInput.value = ''
   isStreaming.value = false
-  
-  // 重置输入框高度
+  fileList.value = []
+  activeFileName.value = ''
+  uploadMessage.value = ''
   if (inputRef.value) {
     inputRef.value.style.height = 'auto'
   }
 }
 
-// 修改 logo 点击处理
 const handleLogoClick = (event) => {
   event.preventDefault()
   cleanupResources()
   router.push('/')
 }
 
-// 修改 startNewChat 方法
 const startNewChat = () => {
-  try {
-    // 清理所有状态
-    cleanupResources()
-    
-    // 重置文件相关状态
-    pdfFile.value = null
-    currentPdfName.value = ''
-    currentChatId.value = null
-    
-    // 重置消息
-    currentMessages.value = []
-    
-    // 重置上传状态
-    isUploading.value = false
-    uploadingFileName.value = ''
-    
-    // 重置输入
-    userInput.value = ''
-    if (inputRef.value) {
-      inputRef.value.style.height = 'auto'
-    }
-    
-    // 重置滚动位置
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = 0
-    }
-  } catch (error) {
-    console.error('开始新对话失败:', error)
+  cleanupResources()
+  pdfFile.value = null
+  currentPdfName.value = ''
+  currentChatId.value = null
+  currentMessages.value = []
+  isUploading.value = false
+  uploadingFileName.value = ''
+  fileList.value = []
+  activeFileName.value = ''
+  userInput.value = ''
+  if (inputRef.value) {
+    inputRef.value.style.height = 'auto'
+  }
+  if (messagesRef.value) {
+    messagesRef.value.scrollTop = 0
   }
 }
 
-// 修改 loadChat 方法
-const loadChat = async (chatId) => {
-  if (!chatId) return
-  
-  cleanupResources()
-  currentChatId.value = chatId
-  
-  try {
-    // 加载消息历史
-    const messages = await chatAPI.getChatMessages(chatId, 'pdf')
-    currentMessages.value = messages.map(msg => ({
-      ...msg,
-      isMarkdown: msg.role === 'assistant'
-    }))
+// ===== 文件列表管理 =====
+const refreshFileList = async (chatId) => {
+  const files = await chatAPI.getPdfFiles(chatId)
+  fileList.value = files
+  // 如果没有选中的文件或选中的文件已被删除，默认选中第一个
+  if (files.length > 0) {
+    if (!activeFileName.value || !files.includes(activeFileName.value)) {
+      activeFileName.value = files[0]
+    }
+  }
+}
 
-    // 从服务器获取 PDF
-    isDownloadingPdf.value = true
-    const response = await fetch(`${BASE_URL}/ai/pdf/file/${chatId}`)
+const switchFile = async (filename) => {
+  if (filename === activeFileName.value) return
+  activeFileName.value = filename
+  // 从服务器获取该文件的 PDF blob
+  isDownloadingPdf.value = true
+  try {
+    const response = await fetch(`${BASE_URL}/ai/pdf/file/${currentChatId.value}?fileName=${encodeURIComponent(filename)}`)
     if (!response.ok) throw new Error('获取 PDF 失败')
-    
-    // 获取文件名
-    const contentDisposition = response.headers.get('content-disposition')
-    let filename = 'document.pdf'
-    if (contentDisposition) {
-      const matches = contentDisposition.match(/filename=["']?([^"']+)["']?/)
-      if (matches && matches[1]) {
-        filename = decodeURIComponent(matches[1])
-      }
-    }
-    
-    // 更新当前文件名和历史记录中的标题
-    currentPdfName.value = filename
-    const chatIndex = chatHistory.value.findIndex(c => c.id === chatId)
-    if (chatIndex !== -1) {
-      chatHistory.value[chatIndex].title = filename
-    }
-    
     const blob = await response.blob()
+    // 用当前文件名创建 File 对象
     pdfFile.value = new File([blob], filename, { type: 'application/pdf' })
   } catch (error) {
-    console.error('加载失败:', error)
-    const errorMessage = {
-      role: 'assistant',
-      content: '加载失败，请重试。',
-      timestamp: new Date(),
-      isMarkdown: true
-    }
-    currentMessages.value.push(errorMessage)
+    console.error('加载 PDF 失败:', error)
   } finally {
     isDownloadingPdf.value = false
   }
 }
 
-// 加载聊天历史
+const handleFileDelete = async (filename) => {
+  if (!currentChatId.value) return
+  const ok = await chatAPI.deletePdfFile(currentChatId.value, filename)
+  if (ok) {
+    showUploadMessage('文件已删除', 'success')
+    await refreshFileList(currentChatId.value)
+    // 如果当前查看的文件被删了，切换到第一个
+    if (activeFileName.value !== fileList.value[0] || !fileList.value.includes(activeFileName.value)) {
+      if (fileList.value.length > 0) {
+        await switchFile(fileList.value[0])
+      } else {
+        // 所有文件都删了
+        activeFileName.value = ''
+        pdfFile.value = null
+        currentChatId.value = null
+      }
+    }
+  } else {
+    showUploadMessage('删除失败，请重试', 'error')
+  }
+}
+
+const showUploadMessage = (msg, type = 'success') => {
+  uploadMessage.value = msg
+  uploadMessageType.value = type
+  setTimeout(() => { uploadMessage.value = '' }, 3000)
+}
+
+// ===== 上传逻辑 =====
+const uploadFile = async (file) => {
+  if (file.type !== 'application/pdf') {
+    showUploadMessage('只能上传 PDF 文件', 'error')
+    return
+  }
+  isUploading.value = true
+  uploadingFileName.value = file.name
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const uploadChatId = currentChatId.value || `pdf_${Date.now()}`
+    const response = await fetch(`${BASE_URL}/ai/pdf/upload/${uploadChatId}`, {
+      method: 'POST',
+      body: formData
+    })
+    if (!response.ok) throw new Error(`上传失败: ${response.status}`)
+    await response.json()
+
+    currentChatId.value = uploadChatId
+
+    // 刷新文件列表
+    await refreshFileList(currentChatId.value)
+
+    // 显示成功提示（首次上传时显示欢迎消息）
+    if (!currentPdfName.value) {
+      currentPdfName.value = file.name
+      currentMessages.value.push({
+        role: 'assistant',
+        content: `已上传 PDF 文件: ${file.name}。您可以开始提问了。`,
+        timestamp: new Date(),
+        isMarkdown: true
+      })
+    } else {
+      showUploadMessage(`${file.name} 上传成功`, 'success')
+    }
+
+    // 如果当前没有 PDF 显示，切换到新文件
+    if (!pdfFile.value) {
+      pdfFile.value = file
+      activeFileName.value = file.name
+    }
+
+    // 添加到聊天历史
+    const newChat = { id: currentChatId.value, title: `PDF对话: ${file.name.slice(0, 20)}${file.name.length > 20 ? '...' : ''}` }
+    if (!chatHistory.value.some(chat => chat.id === currentChatId.value)) {
+      chatHistory.value = [newChat, ...chatHistory.value]
+    }
+  } catch (error) {
+    console.error('上传失败:', error)
+    showUploadMessage('文件上传失败，请重试', 'error')
+  } finally {
+    isUploading.value = false
+    uploadingFileName.value = ''
+  }
+}
+
+const handleDrop = async (event) => {
+  isDragging.value = false
+  const files = event.dataTransfer.files
+  if (files.length === 0) return
+  // 上传所有拖拽的文件
+  for (const file of files) {
+    await uploadFile(file)
+  }
+}
+
+const handleFileUpload = async (event) => {
+  const files = event.target.files
+  if (!files || files.length === 0) return
+  for (const file of files) {
+    await uploadFile(file)
+  }
+  event.target.value = ''
+}
+
+const handleDragOver = () => { isDragging.value = true }
+const handleDragLeave = () => { isDragging.value = false }
+const triggerFileInput = () => { document.querySelector('.file-input').click() }
+
+// ===== 聊天逻辑 =====
+const loadChat = async (chatId) => {
+  if (!chatId) return
+  cleanupResources()
+  currentChatId.value = chatId
+  try {
+    const messages = await chatAPI.getChatMessages(chatId, 'pdf')
+    currentMessages.value = messages.map(msg => ({ ...msg, isMarkdown: msg.role === 'assistant' }))
+
+    // 加载文件列表
+    await refreshFileList(chatId)
+
+    if (fileList.value.length > 0) {
+      activeFileName.value = fileList.value[0]
+      isDownloadingPdf.value = true
+      const response = await fetch(`${BASE_URL}/ai/pdf/file/${chatId}?fileName=${encodeURIComponent(fileList.value[0])}`)
+      if (!response.ok) throw new Error('获取 PDF 失败')
+      const blob = await response.blob()
+      currentPdfName.value = fileList.value[0]
+      const chatIndex = chatHistory.value.findIndex(c => c.id === chatId)
+      if (chatIndex !== -1) {
+        chatHistory.value[chatIndex].title = fileList.value[0]
+      }
+      pdfFile.value = new File([blob], fileList.value[0], { type: 'application/pdf' })
+    }
+  } catch (error) {
+    console.error('加载失败:', error)
+    currentMessages.value.push({ role: 'assistant', content: '加载失败，请重试。', timestamp: new Date(), isMarkdown: true })
+  } finally {
+    isDownloadingPdf.value = false
+  }
+}
+
 const loadChatHistory = async () => {
   try {
     const history = await chatAPI.getChatHistory('pdf')
@@ -310,171 +414,35 @@ const loadChatHistory = async () => {
   }
 }
 
-// 处理文件拖放
-const handleDrop = async (event) => {
-  event.preventDefault()
-  isDragging.value = false
-  
-  const files = event.dataTransfer.files
-  if (files.length === 0) return
-  
-  // 获取第一个文件
-  const file = files[0]
-  
-  // 检查是否为 PDF 文件
-  if (file.type !== 'application/pdf') {
-    alert('请上传 PDF 文件')
-    return
-  }
-  
-  // 设置上传状态和文件名
-  isUploading.value = true
-  uploadingFileName.value = file.name
-  
-  try {
-    // 创建 FormData
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    // 生成临时 chatId 或使用现有的
-    const uploadChatId = currentChatId.value || `pdf_${Date.now()}`
-    
-    // 发送上传请求，修正 API 路径
-    const response = await fetch(`${BASE_URL}/ai/pdf/upload/${uploadChatId}`, {
-      method: 'POST',
-      body: formData
-    })
-    
-    if (!response.ok) {
-      throw new Error(`上传失败: ${response.status}`)
-    }
-    
-    const data = await response.json()
-    
-    // 保存聊天 ID 和文件名
-    currentChatId.value = data.chatId || uploadChatId
-    currentPdfName.value = file.name
-    pdfFile.value = file
-    
-    // 添加到聊天历史
-    const newChat = {
-      id: currentChatId.value,
-      title: `PDF对话: ${file.name.slice(0, 20)}${file.name.length > 20 ? '...' : ''}`
-    }
-    
-    // 更新聊天历史 - 避免重复添加
-    if (!chatHistory.value.some(chat => chat.id === currentChatId.value)) {
-      chatHistory.value = [newChat, ...chatHistory.value]
-    }
-    
-    // 清空消息
-    currentMessages.value = []
-    
-    // 添加系统消息
-    currentMessages.value.push({
-      role: 'assistant',
-      content: `已上传 PDF 文件: ${file.name}。您可以开始提问了。`,
-      timestamp: new Date(),
-      isMarkdown: true
-    })
-    
-  } catch (error) {
-    console.error('上传失败:', error)
-    alert('文件上传失败，请重试')
-  } finally {
-    isUploading.value = false
-    uploadingFileName.value = ''
-  }
-}
-
-// 处理拖拽悬停
-const handleDragOver = (event) => {
-  event.preventDefault()
-  isDragging.value = true
-}
-
-// 处理拖拽离开
-const handleDragLeave = (event) => {
-  event.preventDefault()
-  isDragging.value = false
-}
-
-const triggerFileInput = () => {
-  const fileInput = document.querySelector('.file-input')
-  fileInput.click()
-}
-
-// 添加上传文件名状态（如果还没有的话）
-const uploadingFileName = ref('')
-
-// 修改 sendMessage 方法
 const sendMessage = async () => {
-  if (!userInput.value.trim() || isStreaming.value) return
-  
-  // 添加用户消息到聊天记录
-  const userMessage = {
-    role: 'user',
-    content: userInput.value,
-    timestamp: new Date()
-  }
+  if (!userInput.value.trim() || isStreaming.value || fileList.value.length === 0) return
+  const userMessage = { role: 'user', content: userInput.value, timestamp: new Date() }
   currentMessages.value.push(userMessage)
-  
-  // 清空输入框并调整高度
   const input = userInput.value
   userInput.value = ''
   if (inputRef.value) {
     inputRef.value.style.height = 'auto'
   }
-  
-  // 滚动到底部
   await scrollToBottom()
-  
-  // 添加一个空的助手消息作为流式响应的容器
+
   const assistantMessageIndex = currentMessages.value.length
-  currentMessages.value.push({
-    role: 'assistant',
-    content: '',
-    timestamp: new Date(),
-    isMarkdown: true
-  })
-  
+  currentMessages.value.push({ role: 'assistant', content: '', timestamp: new Date(), isMarkdown: true })
+  isStreaming.value = true
   try {
-    isStreaming.value = true
-    
-    // 发送请求到服务器
-    const reader = await chatAPI.sendPdfMessage(input, currentChatId.value)
+    const reader = await chatAPI.sendPdfMessage(input, currentChatId.value, activeFileName.value)
     const decoder = new TextDecoder()
-    let result = ''
-    
-    // 处理流式响应
+    let buffer = ''
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      
-      const chunk = decoder.decode(value, { stream: true })
-      console.log('收到流式响应块:', chunk)
-      result += chunk
-      
-      // 使用索引直接替换整个消息对象，强制触发响应式更新
-      currentMessages.value[assistantMessageIndex] = {
-        role: 'assistant',
-        content: result,
-        timestamp: new Date(),
-        isMarkdown: true
-      }
-      
-      // 确保 DOM 更新并滚动到底部
-      await nextTick()
+      buffer += decoder.decode(value, { stream: true })
+      currentMessages.value[assistantMessageIndex].content = DOMPurify.sanitize(marked.parse(buffer))
       await scrollToBottom()
     }
-    
   } catch (error) {
     console.error('发送消息失败:', error)
-    currentMessages.value[assistantMessageIndex] = {
-      role: 'assistant',
-      content: '发送消息失败，请重试。',
-      timestamp: new Date(),
-      isMarkdown: true
+    if (currentMessages.value[assistantMessageIndex].content === '') {
+      currentMessages.value[assistantMessageIndex].content = '抱歉，发送消息失败，请重试。'
     }
   } finally {
     isStreaming.value = false
@@ -482,935 +450,361 @@ const sendMessage = async () => {
   }
 }
 
-// 同样需要修改文件上传处理函数
-const handleFileUpload = async (event) => {
-  const files = event.target.files
-  if (files.length === 0) return
-  
-  const file = files[0]
-  
-  // 检查是否为 PDF 文件
-  if (file.type !== 'application/pdf') {
-    alert('请上传 PDF 文件')
-    return
-  }
-  
-  // 设置上传状态和文件名
-  isUploading.value = true
-  uploadingFileName.value = file.name
-  
-  try {
-    // 创建 FormData
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    // 生成临时 chatId 或使用现有的
-    const uploadChatId = currentChatId.value || `pdf_${Date.now()}`
-    
-    // 发送上传请求，修正 API 路径
-    const response = await fetch(`${BASE_URL}/ai/pdf/upload/${uploadChatId}`, {
-      method: 'POST',
-      body: formData
-    })
-    
-    if (!response.ok) {
-      throw new Error(`上传失败: ${response.status}`)
-    }
-    
-    const data = await response.json()
-    
-    // 保存聊天 ID 和文件名
-    currentChatId.value = data.chatId || uploadChatId
-    currentPdfName.value = file.name
-    pdfFile.value = file
-    
-    // 添加到聊天历史
-    const newChat = {
-      id: currentChatId.value,
-      title: `PDF对话: ${file.name.slice(0, 20)}${file.name.length > 20 ? '...' : ''}`
-    }
-    
-    // 更新聊天历史 - 避免重复添加
-    if (!chatHistory.value.some(chat => chat.id === currentChatId.value)) {
-      chatHistory.value = [newChat, ...chatHistory.value]
-    }
-    
-    // 清空消息
-    currentMessages.value = []
-    
-    // 添加系统消息
-    currentMessages.value.push({
-      role: 'assistant',
-      content: `已上传 PDF 文件: ${file.name}。您可以开始提问了。`,
-      timestamp: new Date(),
-      isMarkdown: true
-    })
-    
-  } catch (error) {
-    console.error('上传失败:', error)
-    alert('文件上传失败，请重试')
-  } finally {
-    isUploading.value = false
-    uploadingFileName.value = ''
-    // 清空文件输入，允许重新选择同一文件
-    event.target.value = ''
-  }
-}
-
-// 监听清理事件
 onMounted(() => {
   loadChatHistory()
-  adjustTextareaHeight()
-})
-
-onUnmounted(() => {
-  // 移除事件监听器
-  window.removeEventListener('cleanupChatPDF', cleanupResources)
 })
 </script>
 
 <style scoped lang="scss">
 .chat-pdf {
-  position: fixed;
-  top: 64px;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  height: 100vh;
   display: flex;
-  background: var(--bg-color);
-  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
 
-  .chat-container {
-    flex: 1;
+.chat-container {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(10px);
+}
+
+// ===== 左侧边栏 =====
+.sidebar {
+  width: 260px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
+}
+
+.sidebar-header {
+  padding: 1.2rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+
+  .logo-link {
     display: flex;
-    max-width: 1800px;
-    width: 100%;
-    margin: 0 auto;
-    padding: 1.5rem 2rem;
-    gap: 1.5rem;
-    height: 100%;
-    overflow: hidden;
-  }
+    align-items: center;
+    gap: 0.6rem;
+    text-decoration: none;
+    color: inherit;
 
-  .sidebar {
-    width: 300px;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    border-radius: 1rem;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    
-    .sidebar-header {
-      padding: 1.5rem;
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-
-      .logo-link {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        text-decoration: none;
-        color: inherit;
-        transition: opacity 0.2s;
-        
-        &:hover {
-          opacity: 0.8;
-        }
-      }
-
-      .logo {
-        width: 2rem;
-        height: 2rem;
-        color: #9333ea;
-      }
-
-      .title {
-        font-size: 1.5rem;
-        font-weight: bold;
-        background: linear-gradient(120deg, #9333ea 0%, #c026d3 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-      }
+    .logo {
+      width: 1.8rem;
+      height: 1.8rem;
+      color: #007CF0;
     }
-    
-    .history-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1rem 0;
-      
-      .history-header {
-        padding: 0.5rem 1.5rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        
-        span {
-          font-size: 0.875rem;
-          font-weight: 500;
-          color: #666;
-          text-transform: uppercase;
-        }
 
-        .new-chat-btn {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 0.5rem 0.75rem;
-          border: none;
-          border-radius: 0.5rem;
-          background: #9333ea;
-          color: white;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: all 0.2s;
-
-          &:hover {
-            background: #7e22ce;
-          }
-
-          .icon {
-            width: 1rem;
-            height: 1rem;
-          }
-        }
-      }
-      
-      .history-item {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.75rem 1.5rem;
-        cursor: pointer;
-        transition: background-color 0.2s;
-        
-        &:hover {
-          background: rgba(0, 0, 0, 0.05);
-        }
-        
-        &.active {
-          background: rgba(147, 51, 234, 0.1);
-          
-          .icon {
-            color: #9333ea;
-          }
-          
-          .title {
-            color: #9333ea;
-          }
-        }
-        
-        .icon {
-          width: 1.25rem;
-          height: 1.25rem;
-          color: #666;
-        }
-        
-        .title {
-          flex: 1;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          color: #333;
-        }
-      }
-    }
-  }
-
-  .chat-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    border-radius: 1rem;
-    overflow: hidden;
-
-    .pdf-header {
-      flex-shrink: 0;
-      padding: 1rem 2rem;
-      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-      background: rgba(255, 255, 255, 0.98);
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-
-      .icon {
-        width: 1.5rem;
-        height: 1.5rem;
-        color: #666;
-      }
-
-      .filename {
-        font-size: 1rem;
-        color: #333;
-      }
-    }
-    
-    .messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 2rem;
-
-      .empty-state {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        color: #999;
-        gap: 1rem;
-
-        .big-icon {
-          width: 4rem;
-          height: 4rem;
-          color: #ccc;
-        }
-      }
-    }
-    
-    .input-area {
-      flex-shrink: 0;
-      padding: 1.5rem 2rem;
-      background: rgba(255, 255, 255, 0.98);
-      border-top: 1px solid rgba(0, 0, 0, 0.05);
-      display: flex;
-      gap: 1rem;
-      align-items: flex-end;
-      
-      textarea {
-        flex: 1;
-        resize: none;
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        background: white;
-        border-radius: 0.75rem;
-        padding: 1rem;
-        color: inherit;
-        font-family: inherit;
-        font-size: 1rem;
-        line-height: 1.5;
-        max-height: 150px;
-        
-        &:focus {
-          outline: none;
-          border-color: #333;
-          box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
-        }
-
-        &:disabled {
-          background: #f5f5f5;
-          cursor: not-allowed;
-        }
-      }
-      
-      .send-button {
-        background: #333;
-        color: white;
-        border: none;
-        border-radius: 0.5rem;
-        width: 2.5rem;
-        height: 2.5rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: background-color 0.3s;
-        
-        &:hover:not(:disabled) {
-          background: #000;
-        }
-        
-        &:disabled {
-          background: #ccc;
-          cursor: not-allowed;
-        }
-        
-        .icon {
-          width: 1.25rem;
-          height: 1.25rem;
-        }
-      }
+    .title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #1a1a1a;
     }
   }
 }
 
-.dark {
-  .sidebar {
-    background: rgba(40, 40, 40, 0.95);
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.8rem;
 
-    .sidebar-header {
-      border-bottom-color: rgba(255, 255, 255, 0.05);
-    }
+  .history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.8rem;
+    padding: 0 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 
-    .history-list {
-      .history-header {
-        span {
-          color: #999;
-        }
+    .new-chat-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: none;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 6px;
+      padding: 0.25rem 0.6rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: #555;
 
-        .new-chat-btn {
-          background: rgba(147, 51, 234, 0.8);
-
-          &:hover {
-            background: #9333ea;
-          }
-        }
-      }
-
-      .history-item {
-        &:hover {
-          background: rgba(255, 255, 255, 0.05);
-        }
-
-        &.active {
-          background: rgba(147, 51, 234, 0.15);
-        }
-
-        .icon {
-          color: #999;
-        }
-
-        .title {
-          color: #fff;
-        }
-      }
+      .icon { width: 0.8rem; height: 0.8rem; }
+      &:hover { background: #007CF0; color: #fff; border-color: #007CF0; }
     }
   }
-  
-  .chat-main {
-    background: rgba(40, 40, 40, 0.95);
-    
-    .pdf-header {
-      background: rgba(30, 30, 30, 0.98);
-      border-bottom-color: rgba(255, 255, 255, 0.05);
 
-      .icon {
-        color: #999;
-      }
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 0.2rem;
 
-      .filename {
-        color: #fff;
-      }
-    }
+    .icon { width: 1rem; height: 1rem; color: #999; flex-shrink: 0; }
+    .title { font-size: 0.85rem; color: #444; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    .messages {
-      .empty-state {
-        color: #666;
-
-        .big-icon {
-          color: #444;
-        }
-      }
-    }
-
-    .input-area {
-      background: rgba(30, 30, 30, 0.98);
-      border-top-color: rgba(255, 255, 255, 0.05);
-      
-      textarea {
-        background: rgba(50, 50, 50, 0.95);
-        border-color: rgba(255, 255, 255, 0.1);
-        color: white;
-        
-        &:focus {
-          border-color: #666;
-          box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
-        }
-
-        &:disabled {
-          background: rgba(30, 30, 30, 0.95);
-        }
-      }
-    }
+    &:hover { background: rgba(0, 0, 0, 0.04); }
+    &.active { background: rgba(0, 124, 240, 0.08); .icon, .title { color: #007CF0; } }
   }
 }
 
+// ===== 主区域 =====
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+// ===== 初始上传界面 =====
 .upload-welcome {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2rem;
   padding: 2rem;
-  gap: 3rem;
 
   .main-title {
-    font-size: 3rem;
-    font-weight: bold;
-    text-align: center;
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: #1a1a1a;
 
-    .highlight {
-      color: #9333ea;
-      background: linear-gradient(120deg, #9333ea 0%, #c026d3 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
+    .highlight { color: #007CF0; background: linear-gradient(135deg, #007CF0, #00b4ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
   }
+}
 
-  .drop-zone {
-    width: 100%;
-    max-width: 600px;
-    min-height: 300px;
-    border: 2px dashed #e5e7eb;
-    border-radius: 1rem;
+.drop-zone {
+  width: 100%;
+  max-width: 420px;
+  padding: 3rem 2rem;
+  border: 2px dashed rgba(0, 0, 0, 0.15);
+  border-radius: 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  background: rgba(255, 255, 255, 0.8);
+
+  &:hover, &.dragging { border-color: #007CF0; background: rgba(0, 124, 240, 0.04); transform: translateY(-2px); }
+
+  .upload-content {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    transition: all 0.3s ease;
-    background: rgba(255, 255, 255, 0.5);
-    backdrop-filter: blur(10px);
+    gap: 1rem;
 
-    &.dragging {
-      border-color: #9333ea;
-      background: rgba(147, 51, 234, 0.05);
-    }
-
-    &.uploading {
-      border-style: dashed;
-      border-color: #007CF0;
-      background: rgba(0, 124, 240, 0.05);
-    }
-
-    .upload-content {
+    .upload-icon { width: 3rem; height: 3rem; color: #999; }
+    .upload-text { color: #888; font-size: 0.9rem; }
+    .file-input { display: none; }
+    .upload-button {
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: 1rem;
-      padding: 2rem;
-
-      .upload-status {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 1.5rem;
-
-        .spinner {
-          width: 48px;
-          height: 48px;
-          border: 4px solid rgba(0, 124, 240, 0.1);
-          border-left-color: #007CF0;
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-        }
-
-        .upload-progress {
-          text-align: center;
-
-          .status-text {
-            font-size: 1.25rem;
-            color: #007CF0;
-            margin-bottom: 0.5rem;
-          }
-
-          .filename {
-            font-size: 0.875rem;
-            color: #666;
-            max-width: 300px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
-        }
-      }
-
-      .upload-icon {
-        width: 4rem;
-        height: 4rem;
-        color: #9333ea;
-      }
-
-      .upload-text {
-        font-size: 1.25rem;
-        color: #666;
-      }
-
-      .file-input {
-        display: none;
-      }
-
-      .upload-button {
-        background: #9333ea;
-        color: white;
-        border: none;
-        padding: 0.75rem 2rem;
-        border-radius: 0.5rem;
-        font-size: 1rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        cursor: pointer;
-        transition: all 0.3s ease;
-
-        &:hover {
-          background: #7e22ce;
-        }
-
-        &.uploading {
-          background: #9333ea80;
-          cursor: not-allowed;
-        }
-
-        .icon {
-          width: 1.25rem;
-          height: 1.25rem;
-        }
-      }
+      gap: 0.5rem;
+      padding: 0.7rem 1.5rem;
+      background: #007CF0;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      .icon { width: 1rem; height: 1rem; }
+      &:hover { background: #005bb5; transform: translateY(-1px); }
     }
   }
 }
 
-.dark {
-  .upload-welcome {
-    .drop-zone {
-      border-color: #444;
-      background: rgba(40, 40, 40, 0.5);
-
-      &.dragging {
-        border-color: #9333ea;
-        background: rgba(147, 51, 234, 0.1);
-      }
-
-      &.uploading {
-        border-color: #007CF0;
-        background: rgba(0, 124, 240, 0.1);
-      }
-
-      .upload-content {
-        .upload-status {
-          .spinner {
-            border-color: rgba(0, 124, 240, 0.2);
-            border-left-color: #007CF0;
-          }
-
-          .upload-progress {
-            .status-text {
-              color: #007CF0;
-            }
-
-            .filename {
-              color: #999;
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
+// ===== 分栏视图 =====
 .split-view {
   flex: 1;
   display: flex;
-  overflow: hidden;
-
-  .pdf-view {
-    flex: 1;
-    max-width: 50%;
-    display: flex;
-    flex-direction: column;
-    border-right: 1px solid rgba(0, 0, 0, 0.1);
-    background: #fff;
-
-    .pdf-header {
-      padding: 1rem 1.5rem;
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      background: #f8f9fa;
-      border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-
-      .icon {
-        width: 1.5rem;
-        height: 1.5rem;
-        color: #666;
-      }
-
-      .filename {
-        flex: 1;
-        font-weight: 500;
-        color: #333;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .page-control {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-
-        .page-btn {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 2rem;
-          height: 2rem;
-          border: none;
-          border-radius: 0.375rem;
-          background: #fff;
-          color: #666;
-          cursor: pointer;
-          transition: all 0.2s;
-
-          &:hover:not(:disabled) {
-            background: #f0f0f0;
-            color: #333;
-          }
-
-          &:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-          }
-
-          .icon {
-            width: 1.25rem;
-            height: 1.25rem;
-          }
-        }
-
-        .page-info {
-          font-size: 0.875rem;
-          color: #666;
-          min-width: 4rem;
-          text-align: center;
-        }
-      }
-    }
-
-    .pdf-content {
-      position: relative;  // 添加相对定位
-      flex: 1;
-      overflow-y: auto;
-      background: #f1f1f1;
-      padding: 1rem;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 1rem;
-
-      .pdf-loading {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 1rem;
-        z-index: 10;  // 确保加载提示在最上层
-        background: rgba(255, 255, 255, 0.9);  // 添加半透明背景
-        padding: 2rem;
-        border-radius: 1rem;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-
-        .loading-spinner {
-          width: 48px;
-          height: 48px;
-          border: 4px solid rgba(0, 124, 240, 0.1);
-          border-left-color: #007CF0;
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-        }
-
-        .loading-text {
-          color: #666;
-          font-size: 1rem;
-          font-weight: 500;
-        }
-      }
-
-      canvas {
-        background: #fff;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        max-width: 100%;
-        height: auto !important;
-        flex-shrink: 0;
-      }
-    }
-  }
+  height: 100vh;
 
   .chat-view {
     flex: 1;
-    min-width: 400px;
+    min-width: 380px;
     max-width: 50%;
     display: flex;
     flex-direction: column;
     background: #fff;
-
-    .messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1.5rem;
-    }
-
-    .input-area {
-      flex-shrink: 0;
-      padding: 1.5rem 2rem;
-      background: rgba(255, 255, 255, 0.98);
-      border-top: 1px solid rgba(0, 0, 0, 0.05);
-      display: flex;
-      gap: 1rem;
-      align-items: flex-end;
-      
-      textarea {
-        flex: 1;
-        resize: none;
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        background: white;
-        border-radius: 0.75rem;
-        padding: 1rem;
-        color: inherit;
-        font-family: inherit;
-        font-size: 1rem;
-        line-height: 1.5;
-        max-height: 150px;
-        
-        &:focus {
-          outline: none;
-          border-color: #333;
-          box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
-        }
-
-        &:disabled {
-          background: #f5f5f5;
-          cursor: not-allowed;
-        }
-      }
-      
-      .send-button {
-        background: #333;
-        color: white;
-        border: none;
-        border-radius: 0.5rem;
-        width: 2.5rem;
-        height: 2.5rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: background-color 0.3s;
-        
-        &:hover:not(:disabled) {
-          background: #000;
-        }
-        
-        &:disabled {
-          background: #ccc;
-          cursor: not-allowed;
-        }
-        
-        .icon {
-          width: 1.25rem;
-          height: 1.25rem;
-        }
-      }
-    }
+    position: relative;
   }
 }
 
+// ===== 上传进度条 =====
+.upload-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: #555;
+  background: #f0f7ff;
+  border-bottom: 1px solid rgba(0,124,240,0.1);
+
+  &.success { background: #f0fff4; color: #2e7d32; border-bottom-color: rgba(46,125,50,0.1); }
+  &.error { background: #fff0f0; color: #c62828; border-bottom-color: rgba(198,40,40,0.1); }
+
+  .upload-spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(0,124,240,0.2);
+    border-left-color: #007CF0;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .banner-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: inherit;
+    opacity: 0.5;
+    &:hover { opacity: 1; }
+  }
+}
+
+// ===== 消息区域 =====
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.no-file-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 3rem 1rem;
+  color: #999;
+  font-size: 0.9rem;
+
+  .upload-again-btn {
+    padding: 0.5rem 1.2rem;
+    background: #007CF0;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+    &:hover { background: #005bb5; }
+  }
+}
+
+// ===== 输入区域 =====
+.input-area {
+  flex-shrink: 0;
+  padding: 1.5rem 2rem;
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  
+  textarea {
+    flex: 1;
+    resize: none;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: white;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    color: inherit;
+    font-family: inherit;
+    font-size: 1rem;
+    line-height: 1.5;
+    max-height: 150px;
+    
+    &:focus { outline: none; border-color: #333; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1); }
+    &:disabled { background: #f5f5f5; cursor: not-allowed; }
+  }
+  
+  .send-button {
+    background: #333;
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    
+    &:hover:not(:disabled) { background: #000; }
+    &:disabled { background: #ccc; cursor: not-allowed; }
+    .icon { width: 1.25rem; height: 1.25rem; }
+  }
+}
+
+// ===== 暗色模式 =====
 .dark {
-  .split-view {
-    .pdf-view {
-      border-right-color: rgba(255, 255, 255, 0.1);
-      background: #1a1a1a;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
 
-      .pdf-header {
-        background: rgba(30, 30, 30, 0.98);
-        border-bottom-color: rgba(255, 255, 255, 0.1);
+  .chat-container { background: rgba(0, 0, 0, 0.4); }
 
-        .icon {
-          color: #999;
-        }
+  .sidebar {
+    background: rgba(30, 30, 30, 0.8);
+    border-right-color: rgba(255, 255, 255, 0.08);
+  }
 
-        .filename {
-          color: #fff;
-        }
+  .sidebar-header {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    .logo-link .title { color: #eee; }
+  }
 
-        .page-control {
-          .page-btn {
-            background: rgba(255, 255, 255, 0.1);
-            color: #999;
+  .history-list .history-item {
+    .title { color: #aaa; }
+    &:hover { background: rgba(255, 255, 255, 0.06); }
+    &.active { background: rgba(0, 124, 240, 0.15); .icon, .title { color: #007CF0; } }
+  }
 
-            &:hover:not(:disabled) {
-              background: rgba(255, 255, 255, 0.2);
-              color: #fff;
-            }
-          }
+  .history-list .history-header .new-chat-btn {
+    color: #aaa;
+    border-color: rgba(255,255,255,0.15);
+    &:hover { background: #007CF0; color: #fff; }
+  }
 
-          .page-info {
-            color: #999;
-          }
-        }
-      }
+  .upload-welcome .main-title { color: #eee; }
 
-      .pdf-content {
-        background: #0d0d0d;
+  .drop-zone {
+    border-color: rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.05);
+    &:hover, &.dragging { border-color: #007CF0; }
+    .upload-text { color: #aaa; }
+  }
 
-        .pdf-loading {
-          .loading-spinner {
-            border-color: rgba(0, 124, 240, 0.2);
-            border-left-color: #007CF0;
-          }
+  .chat-view { background: #1a1a1a; }
+  .input-area { background: rgba(30, 30, 30, 0.98); border-top-color: rgba(255,255,255,0.05); }
+  .messages { background: #1a1a1a; }
 
-          .loading-text {
-            color: #999;
-          }
-        }
-
-        canvas {
-          background: #1a1a1a;
-        }
-      }
-    }
-
-    .chat-view {
-      background: #1a1a1a;
-    }
+  .upload-banner {
+    background: rgba(0,124,240,0.1);
+    color: #ccc;
+    &.success { background: rgba(46,125,50,0.15); color: #81c784; }
+    &.error { background: rgba(198,40,40,0.15); color: #ef9a9a; }
   }
 }
 
-@media (max-width: 1024px) {
-  .split-view {
-    flex-direction: column;
-
-    .pdf-view {
-      height: 50vh;
-      border-right: none;
-      border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    }
-
-    .chat-view {
-      width: 100%;
-      min-width: 0;
-      height: 50vh;
-    }
-  }
-
-  .dark .split-view .pdf-view {
-    border-bottom-color: rgba(255, 255, 255, 0.1);
-  }
-}
-
-@media (max-width: 768px) {
-  .chat-pdf {
-    .chat-container {
-      padding: 0;
-    }
-    
-    .sidebar {
-      display: none;
-    }
-    
-    .chat-main {
-      border-radius: 0;
-    }
-  }
-}
-
-// 添加动画
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
-</style> 
+</style>
+

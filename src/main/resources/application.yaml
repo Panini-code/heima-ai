@@ -19,9 +19,9 @@ spring:
     vectorstore:
       redis:
         uri: redis://localhost:6379
-        index: ai-document-index    # 向量索引名
-        prefix: "doc:"              # key 前缀
-        initialize-schema: true     # 自动创建索引
+        index: ai-document-index
+        prefix: "doc:"
+        initialize-schema: true
   data:
     redis:
       host: localhost
@@ -31,6 +31,14 @@ spring:
     url: jdbc:mysql://localhost:3306/itheima?serverTimezone=Asia/Shanghai&useSSL=false&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&transformedBitIsBoolean=true&tinyInt1isBit=false&allowPublicKeyRetrieval=true&allowMultiQueries=true&useServerPrepStmts=false
     username: root
     password: 1234
+
+app:
+  rag:
+    chunk:
+      max-size: 1000
+      overlap: 150
+      strategy: sliding
+
 logging:
   level:
     org.springframework.ai: debug
