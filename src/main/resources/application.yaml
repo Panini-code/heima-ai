@@ -11,7 +11,7 @@ spring:
       api-key: ${OPENAI_API_KEY}
       chat:
         options:
-          model: qwen3.7-max
+          model: qwen3.5-omni-plus
       embedding:
         options:
           model: text-embedding-v3

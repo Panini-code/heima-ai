@@ -1,7 +1,7 @@
 package com.itheima.ai.repository;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -11,12 +11,15 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.Objects;
 
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class LocalPdfFileRepository implements FileRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(LocalPdfFileRepository.class);
 
     private static final String KEY_PREFIX = "chat:pdf:files:";
 

@@ -6,8 +6,10 @@ import com.itheima.ai.repository.FileRepository;
 import com.itheima.ai.service.DocumentChunkingService;
 import com.itheima.ai.service.QueryRewriteService;
 import com.itheima.ai.service.ReRankerService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.Message;
@@ -29,13 +31,16 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 
-@Slf4j
 @RequiredArgsConstructor
 @RestController
 @RequestMapping("/ai/pdf")
 public class PdfController {
+
+    private static final Logger log = LoggerFactory.getLogger(PdfController.class);
 
     private final FileRepository fileRepository;
     private final VectorStore vectorStore;

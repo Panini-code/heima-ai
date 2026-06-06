@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="chat-pdf" :class="{ 'dark': isDark }">
     <div class="chat-container">
       <!-- 左侧边栏 -->
@@ -23,10 +23,14 @@
             :key="chat.id"
             class="history-item"
             :class="{ 'active': currentChatId === chat.id }"
-            @click="loadChat(chat.id)"
           >
-            <DocumentTextIcon class="icon" />
-            <span class="title">{{ chat.title || 'PDF对话' }}</span>
+            <div class="history-item-content" @click="loadChat(chat.id)">
+              <DocumentTextIcon class="icon" />
+              <span class="title">{{ chat.title || 'PDF对话' }}</span>
+            </div>
+            <button class="delete-btn" @click.stop="confirmDelete(chat)" title="删除会话">
+              <TrashIcon class="icon" />
+            </button>
           </div>
         </div>
       </div>
@@ -126,6 +130,19 @@
         </div>
       </div>
     </div>
+    <!-- 删除确认弹窗 -->
+    <div v-if="deleteTarget" class="modal-overlay" @click.self="deleteTarget = null">
+      <div class="modal-card">
+        <div class="modal-header">
+          <span>确认删除</span>
+        </div>
+        <p class="modal-body">确定要删除该PDF会话吗？所有聊天记录将被永久清除。</p>
+        <div class="modal-footer">
+          <button class="btn btn-cancel" @click="deleteTarget = null">取消</button>
+          <button class="btn btn-danger" @click="doDelete">确认删除</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -145,7 +162,6 @@ import ChatMessage from '../components/ChatMessage.vue'
 import { chatAPI } from '../services/api'
 import { useRouter } from 'vue-router'
 import PDFViewer from '../components/PDFViewer.vue'
-
 const isDark = useDark()
 const router = useRouter()
 const messagesRef = ref(null)
@@ -153,6 +169,7 @@ const inputRef = ref(null)
 const userInput = ref('')
 const isStreaming = ref(false)
 const isUploading = ref(false)
+const deleteTarget = ref(null)
 const uploadingFileName = ref('')
 const currentChatId = ref(null)
 const chatHistory = ref([])
@@ -209,6 +226,31 @@ const handleLogoClick = (event) => {
   event.preventDefault()
   cleanupResources()
   router.push('/')
+}
+
+const confirmDelete = (chat) => {
+  deleteTarget.value = chat
+}
+
+const doDelete = async () => {
+  if (!deleteTarget.value) return
+  const chatId = deleteTarget.value.id
+  try {
+    await chatAPI.deleteChat('pdf', chatId)
+    chatHistory.value = chatHistory.value.filter(cr => cr.id !== chatId)
+    if (currentChatId.value === chatId) {
+      currentChatId.value = null
+      currentMessages.value = []
+pdfFile.value = null
+      activeFileName.value = ""
+      fileList.value = []
+          }
+  } catch (err) {
+    console.error('删除会话失败:', err)
+    alert('删除会话失败，请重试')
+  } finally {
+    deleteTarget.value = null
+  }
 }
 
 const startNewChat = () => {
@@ -543,25 +585,54 @@ onMounted(() => {
     }
   }
 
-  .history-item {
+    .history-item {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.6rem 0.8rem;
-    border-radius: 8px;
+    justify-content: space-between;
+    padding: 0.65rem 0.75rem;
+    margin: 0.25rem 0;
+    border-radius: 0.5rem;
     cursor: pointer;
-    transition: all 0.2s;
-    margin-bottom: 0.2rem;
+    transition: all 0.2s ease;
 
-    .icon { width: 1rem; height: 1rem; color: #999; flex-shrink: 0; }
-    .title { font-size: 0.85rem; color: #444; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-item-content {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
 
-    &:hover { background: rgba(0, 0, 0, 0.04); }
-    &.active { background: rgba(0, 124, 240, 0.08); .icon, .title { color: #007CF0; } }
+    .icon { width: 1.25rem; height: 1.25rem; flex-shrink: 0; }
+    .title {
+      font-size: 0.9rem; color: #333;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    &:hover { background: rgba(0, 0, 0, 0.03) !important; }
+    &.active { background: rgba(0, 124, 240, 0.15) !important; }
+
+    .delete-btn {
+      width: 2rem; height: 2rem;
+      display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: 0.375rem; background: transparent;
+      color: #999; cursor: pointer; opacity: 0;
+      transition: all 0.2s ease; flex-shrink: 0;
+
+      .icon { width: 1rem; height: 1rem; }
+    }
+
+    &:hover .delete-btn { opacity: 1; }
+
+    .delete-btn:hover {
+      background: rgba(255, 77, 79, 0.1);
+      color: #ff4d4f;
+    }
   }
-}
 
 // ===== 主区域 =====
+}
 .chat-main {
   flex: 1;
   display: flex;
@@ -632,7 +703,7 @@ onMounted(() => {
 .split-view {
   flex: 1;
   display: flex;
-  height: 100vh;
+  height: 100%;
 
   .chat-view {
     flex: 1;
@@ -800,6 +871,66 @@ onMounted(() => {
     &.success { background: rgba(46,125,50,0.15); color: #81c784; }
     &.error { background: rgba(198,40,40,0.15); color: #ef9a9a; }
   }
+}
+
+// ===== 删除确认弹窗 =====
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  min-width: 360px;
+  max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.modal-body {
+  font-size: 0.95rem;
+  color: #666;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.btn {
+  padding: 0.5rem 1.25rem;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel {
+  background: #f0f0f0;
+  color: #333;
+  &:hover { background: #e0e0e0; }
+}
+
+.btn-danger {
+  background: #ff4d4f;
+  color: white;
+  &:hover { background: #e04345; }
 }
 
 @keyframes spin {

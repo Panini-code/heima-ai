@@ -156,5 +156,21 @@ export const chatAPI = {
       console.error('删除文件失败:', error)
       return false
     }
+  },
+  // 删除指定会话
+  async deleteChat(type, chatId) {
+    try {
+      const response = await fetch(`${BASE_URL}/ai/history/${type}/${chatId}`, {
+        method: 'DELETE'
+      })
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      return true
+    } catch (error) {
+      console.error('删除会话失败:', error)
+      return false
+    }
   }
+
 }

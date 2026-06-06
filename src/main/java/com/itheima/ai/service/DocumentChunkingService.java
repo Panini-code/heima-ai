@@ -1,17 +1,20 @@
 package com.itheima.ai.service;
 
 import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.Map;
 
-@Slf4j
 @Component
 public class DocumentChunkingService {
+
+    private static final Logger log = LoggerFactory.getLogger(DocumentChunkingService.class);
 
     private final ChunkProperties chunkProperties;
 
