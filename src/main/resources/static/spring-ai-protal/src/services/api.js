@@ -1,4 +1,4 @@
-﻿const BASE_URL = 'http://localhost:8080'
+const BASE_URL = 'http://localhost:8080'
 
 export const chatAPI = {
   // 发送聊天消息
@@ -171,6 +171,23 @@ export const chatAPI = {
       console.error('删除会话失败:', error)
       return false
     }
-  }
+  },
 
+  // 发送 Agent PDF 消息（深度分析模式）
+  async sendAgentPdfMessage(prompt, chatId) {
+    try {
+      let url = `${BASE_URL}/ai/pdf/agent/chat?prompt=${encodeURIComponent(prompt)}&chatId=${chatId}`
+      const response = await fetch(url, {
+        method: 'GET',
+        signal: AbortSignal.timeout(60000)
+      })
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`)
+      }
+      return response.body.getReader()
+    } catch (error) {
+      console.error('Agent PDF API Error:', error)
+      throw error
+    }
+  }
 }

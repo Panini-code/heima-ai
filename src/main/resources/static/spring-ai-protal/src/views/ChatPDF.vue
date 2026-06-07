@@ -109,6 +109,19 @@
               </div>
             </div>
             
+            <!-- 模式切换 -->
+            <div class="mode-switch">
+              <span class="mode-label" :class="{ 'active': !agentMode }">普通模式</span>
+              <button 
+                class="toggle-btn" 
+                :class="{ 'active': agentMode }"
+                @click="agentMode = !agentMode"
+                :disabled="isStreaming"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+              <span class="mode-label" :class="{ 'active': agentMode }">深度分析</span>
+            </div>
             <div class="input-area">
               <textarea
                 v-model="userInput"
@@ -130,7 +143,7 @@
         </div>
       </div>
     </div>
-    <!-- 删除确认弹窗 -->
+            <!-- 删除确认弹窗 -->
     <div v-if="deleteTarget" class="modal-overlay" @click.self="deleteTarget = null">
       <div class="modal-card">
         <div class="modal-header">
@@ -170,6 +183,7 @@ const userInput = ref('')
 const isStreaming = ref(false)
 const isUploading = ref(false)
 const deleteTarget = ref(null)
+const agentMode = ref(false)
 const uploadingFileName = ref('')
 const currentChatId = ref(null)
 const chatHistory = ref([])
@@ -408,7 +422,21 @@ const handleFileUpload = async (event) => {
 
 const handleDragOver = () => { isDragging.value = true }
 const handleDragLeave = () => { isDragging.value = false }
-const triggerFileInput = () => { document.querySelector('.file-input').click() }
+const triggerFileInput = () => {
+  let input = document.querySelector('.file-input')
+  if (input) { input.click(); return }
+  // 动态创建临时文件输入
+  input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.pdf'
+  input.multiple = true
+  input.style.display = 'none'
+  input.addEventListener('change', handleFileUpload)
+  document.body.appendChild(input)
+  input.click()
+  // 使用完后移除
+  setTimeout(() => input.remove(), 1000)
+}
 
 // ===== 聊天逻辑 =====
 const loadChat = async (chatId) => {
@@ -471,7 +499,12 @@ const sendMessage = async () => {
   currentMessages.value.push({ role: 'assistant', content: '', timestamp: new Date(), isMarkdown: true })
   isStreaming.value = true
   try {
-    const reader = await chatAPI.sendPdfMessage(input, currentChatId.value, activeFileName.value)
+    let reader
+    if (agentMode.value) {
+      reader = await chatAPI.sendAgentPdfMessage(input, currentChatId.value)
+    } else {
+      reader = await chatAPI.sendPdfMessage(input, currentChatId.value, activeFileName.value)
+    }
     const decoder = new TextDecoder()
     let buffer = ''
     while (true) {
@@ -681,6 +714,7 @@ onMounted(() => {
     .upload-icon { width: 3rem; height: 3rem; color: #999; }
     .upload-text { color: #888; font-size: 0.9rem; }
     .file-input { display: none; }
+
     .upload-button {
       display: flex;
       align-items: center;
@@ -937,5 +971,74 @@ onMounted(() => {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+// ===== 模式切换开关 =====
+.mode-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0 0.25rem;
+
+  .mode-label {
+    font-size: 0.8rem;
+    color: #999;
+    transition: color 0.2s;
+
+    &.active {
+      color: #007CF0;
+      font-weight: 500;
+    }
+  }
+
+  .toggle-btn {
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    border: none;
+    background: #ccc;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.2s;
+    padding: 0;
+
+    &.active {
+      background: #007CF0;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .toggle-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: white;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+
+    &.active .toggle-knob {
+      transform: translateX(18px);
+    }
+  }
+}
+
+.dark {
+  .mode-switch .mode-label {
+    color: #666;
+    &.active { color: #007CF0; }
+  }
+  .mode-switch .toggle-btn {
+    background: #555;
+    &.active { background: #007CF0; }
+  }
+}
+
 </style>
 
