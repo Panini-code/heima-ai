@@ -12,6 +12,7 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Component;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Component
@@ -23,20 +24,35 @@ public class PdfSearchTool {
     private final ReRankerService reRankerService;
     private final FileRepository fileRepository;
 
-    @Tool(description = "搜索PDF文档内容，根据用户的问题查找相关文档片段")
+    @Tool(description = "搜索PDF文档内容，根据用户的问题查找相关文档片段，返回搜索到的文档段落")
     public String searchPdf(
             @ToolParam(description = "用户的问题或搜索关键词") String query,
-            @ToolParam(description = "指定要搜索的文件名", required = false) String fileName) {
+            @ToolParam(description = "指定要搜索的文件名（可选），不指定则搜索当前会话下的所有文件") String fileName,
+            @ToolParam(description = "当前会话ID，用于获取该会话关联的文件列表") String chatId) {
 
-        log.info("Agent PDF搜索: query='{}' fileName='{}'", query, fileName);
+        log.info("Agent PDF搜索: query='{}' fileName='{}' chatId='{}'", query, fileName, chatId);
 
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(query)
-                .topK(8)
-                .similarityThreshold(0.4);
+                .topK(10)
+                .similarityThreshold(0.35);
 
         if (fileName != null && !fileName.isEmpty()) {
+            // 搜索指定文件
             builder.filterExpression("file_name == '" + fileName + "'");
+        } else if (chatId != null && !chatId.isEmpty()) {
+            List<String> files = fileRepository.listFiles(chatId);
+            if (files.size() == 1) {
+                builder.filterExpression("file_name == '" + files.get(0) + "'");
+                log.info("搜索文件: {}", files.get(0));
+            } else if (files.size() > 1) {
+                // 多文件：使用 OR 表达式搜索全部文件
+                String filter = files.stream()
+                        .map(f -> "file_name == '" + f + "'")
+                        .collect(Collectors.joining(" OR "));
+                builder.filterExpression(filter);
+                log.info("跨文件搜索: 共 {} 个文件", files.size());
+            }
         }
 
         List<Document> retrievedDocs = vectorStore.similaritySearch(builder.build());
@@ -55,7 +71,7 @@ public class PdfSearchTool {
             String source = doc.getMetadata() != null
                     ? doc.getMetadata().getOrDefault("file_name", "未知文件").toString()
                     : "未知文件";
-            result.append("--- 片段 ").append(i + 1).append("（来源：").append(source).append("）---\n");
+            result.append("--- 片段 ").append(i + 1).append("(来源：").append(source).append(")---\n");
             result.append(doc.getText()).append("\n\n");
         }
 

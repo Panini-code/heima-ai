@@ -96,7 +96,9 @@
             </div>
 
             <div class="messages" ref="messagesRef">
-              <ChatMessage
+              <!-- Agent 思维步骤显示（先展现） -->
+          <AgentThinking :steps="thinkingSteps" />
+          <ChatMessage
                 v-for="(message, index) in currentMessages"
                 :key="index"
                 :message="message"
@@ -172,6 +174,7 @@ import {
   PlusIcon
 } from '@heroicons/vue/24/outline'
 import ChatMessage from '../components/ChatMessage.vue'
+import AgentThinking from '../components/AgentThinking.vue'
 import { chatAPI } from '../services/api'
 import { useRouter } from 'vue-router'
 import PDFViewer from '../components/PDFViewer.vue'
@@ -184,6 +187,7 @@ const isStreaming = ref(false)
 const isUploading = ref(false)
 const deleteTarget = ref(null)
 const agentMode = ref(false)
+const thinkingSteps = ref([])
 const uploadingFileName = ref('')
 const currentChatId = ref(null)
 const chatHistory = ref([])
@@ -221,6 +225,7 @@ const scrollToBottom = async () => {
 const cleanupResources = () => {
   currentPdfName.value = ''
   currentMessages.value = []
+  thinkingSteps.value = []
   pdfFile.value = null
   currentChatId.value = null
   isDownloadingPdf.value = false
@@ -498,20 +503,61 @@ const sendMessage = async () => {
   const assistantMessageIndex = currentMessages.value.length
   currentMessages.value.push({ role: 'assistant', content: '', timestamp: new Date(), isMarkdown: true })
   isStreaming.value = true
-  try {
+      try {
     let reader
     if (agentMode.value) {
       reader = await chatAPI.sendAgentPdfMessage(input, currentChatId.value)
+      // 清空思维步骤
+      thinkingSteps.value = []
+      currentMessages.value[assistantMessageIndex].content = ''
     } else {
       reader = await chatAPI.sendPdfMessage(input, currentChatId.value, activeFileName.value)
     }
-    const decoder = new TextDecoder()
+        const decoder = new TextDecoder()
     let buffer = ''
+    let lineBuffer = ''
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      currentMessages.value[assistantMessageIndex].content = DOMPurify.sanitize(marked.parse(buffer))
+      const chunk = decoder.decode(value, { stream: true })
+      if (agentMode.value) {
+                // 深度分析模式：解析 JSON-per-line 事件流
+        lineBuffer += chunk
+        const lines = lineBuffer.split('\n')
+        lineBuffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            // 去除可能的 SSE "data: " 前缀
+            let cleanLine = line.trim()
+            if (cleanLine.startsWith("data:")) {
+              cleanLine = cleanLine.slice(5).trim()
+            }
+            const event = JSON.parse(cleanLine)
+            const evtType = event.type
+            const data = event.content || ''
+            if (evtType === 'reasoning') {
+              thinkingSteps.value.push({ type: 'reasoning', content: data, toolName: event.toolName, toolInput: event.toolInput, toolOutput: event.toolOutput })
+            } else if (evtType === 'tool_call') {
+              thinkingSteps.value.push({ type: 'tool_call', toolName: event.toolName, toolInput: event.toolInput })
+            } else if (evtType === 'tool_result') {
+              thinkingSteps.value.push({ type: 'tool_result', toolName: event.toolName, toolOutput: event.toolOutput || '' })
+            } else if (evtType === 'answer') {
+              buffer += data
+              currentMessages.value[assistantMessageIndex].content = DOMPurify.sanitize(marked.parse(buffer))
+            } else if (evtType === 'error') {
+              console.error('Agent error:', data)
+            }
+          } catch (e) {
+            // JSON \u89e3\u6790\u5931\u8d25\uff0c\u884c\u53ef\u80fd\u88ab\u622a\u65ad\uff0c\u7559\u5728 buffer \u4e2d\u7ee7\u7eed\u7b49\u5f85
+            lineBuffer = line + '\n' + lineBuffer
+          }
+        }
+      } else {
+        // 普通模式：直接渲染 Markdown
+        buffer += chunk
+        currentMessages.value[assistantMessageIndex].content = DOMPurify.sanitize(marked.parse(buffer))
+      }
       await scrollToBottom()
     }
   } catch (error) {
@@ -1041,4 +1087,3 @@ onMounted(() => {
 }
 
 </style>
-

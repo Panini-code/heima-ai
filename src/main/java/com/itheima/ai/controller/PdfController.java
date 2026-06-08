@@ -34,6 +34,7 @@ import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
+import static org.springframework.ai.chat.client.advisor.AbstractChatMemoryAdvisor.CHAT_MEMORY_CONVERSATION_ID_KEY;
 
 @RequiredArgsConstructor
 @RestController
@@ -89,6 +90,7 @@ public class PdfController {
         return pdfChatClient.prompt()
                 .system(systemPrompt)
                 .user(prompt)
+                .advisors(a -> a.param(CHAT_MEMORY_CONVERSATION_ID_KEY, chatId))
                 .stream()
                 .content();
     }

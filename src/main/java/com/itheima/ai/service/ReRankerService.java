@@ -52,9 +52,15 @@ public class ReRankerService {
                     .call()
                     .content();
 
-            // 3. 解析评分结果
+            // 3. 清理 Markdown 代码框架（修复：匹配三个反引号而非反斜杠+反引号）
+            String cleanResponse = response
+                    .replaceAll("(?s)`json\\s*", "")
+                    .replaceAll("(?s)`\\s*", "")
+                    .trim();
+
+            // 4. 解析评分结果
             Map<String, List<Map<String, Object>>> result = objectMapper.readValue(
-                    response, new TypeReference<>() {});
+                    cleanResponse, new TypeReference<>() {});
 
             List<Map<String, Object>> scores = result.get("scores");
             if (scores == null) {
